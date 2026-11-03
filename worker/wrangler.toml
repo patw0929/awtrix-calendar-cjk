@@ -1,0 +1,7 @@
+name = "tc002-calendar"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+# Optional custom CDN font URL if not using default jsDelivr
+# FONT_URL = "https://cdn.jsdelivr.net/gh/patw0929/awtrix-calendar-cjk@master/assets/cjk_font.bin"
