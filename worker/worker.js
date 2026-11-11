@@ -17,24 +17,28 @@ let _fontBuf = null;
 
 async function getFontBuf(env) {
   if (_fontBuf) return _fontBuf;
-  const targetUrl = env?.FONT_URL || FONT_URL_PRIMARY;
-  try {
-    const res = await fetch(targetUrl, {
-      cf: { cacheEverything: true, cacheTtl: 604800 }
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    _fontBuf = new Uint8Array(await res.arrayBuffer());
-    return _fontBuf;
-  } catch (err) {
-    if (targetUrl === FONT_URL_PRIMARY) {
-      const fb = await fetch(FONT_URL_FALLBACK);
-      if (fb.ok) {
-        _fontBuf = new Uint8Array(await fb.arrayBuffer());
+  const candidates = [
+    env?.FONT_URL,
+    FONT_URL_PRIMARY,
+    FONT_URL_FALLBACK
+  ].filter(Boolean);
+
+  let lastError = null;
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, {
+        cf: { cacheEverything: true, cacheTtl: 604800 }
+      });
+      if (res.ok) {
+        _fontBuf = new Uint8Array(await res.arrayBuffer());
         return _fontBuf;
       }
+      lastError = new Error("HTTP " + res.status);
+    } catch (err) {
+      lastError = err;
     }
-    throw new Error("Failed to load font from CDN (" + targetUrl + "): " + err.message);
   }
+  throw new Error("Failed to load font from CDN: " + (lastError?.message || "Unknown error"));
 }
 
   function lookupCJK(code, buf) {
