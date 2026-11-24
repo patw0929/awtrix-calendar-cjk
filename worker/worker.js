@@ -13,8 +13,11 @@
 // @@FONT_LOADER_START
 // Font binary: Japanese Kana (0x3041..) -> CJK Ideographs (0x4E00..) -> Korean Hangul (0xAC00..)
 // CDN font configuration
-const FONT_URL_PRIMARY = "https://cdn.jsdelivr.net/gh/patw0929/awtrix-calendar-cjk@master/assets/cjk_font.bin";
-const FONT_URL_FALLBACK = "https://raw.githubusercontent.com/patw0929/awtrix-calendar-cjk/master/assets/cjk_font.bin";
+// Bump FONT_VERSION whenever assets/cjk_font.bin changes: the font is cached at the
+// Cloudflare edge for 7 days, and the query string makes a new cache key.
+const FONT_VERSION = "26212";
+const FONT_URL_PRIMARY = "https://cdn.jsdelivr.net/gh/patw0929/awtrix-calendar-cjk@master/assets/cjk_font.bin?v=" + FONT_VERSION;
+const FONT_URL_FALLBACK = "https://raw.githubusercontent.com/patw0929/awtrix-calendar-cjk/master/assets/cjk_font.bin?v=" + FONT_VERSION;
 
 let _fontBuf = null;
 
