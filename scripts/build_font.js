@@ -9,7 +9,7 @@
  * - 177 Japanese Kana (Hiragana, Katakana, Chouonpu, Sokwon)
  * - CJK punctuation (U+3000..303F) and full-width forms (U+FF01..FF5E)
  * - 11,172 Korean Hangul syllables (U+AC00 ~ U+D7A3, 100% of modern Hangul)
- * Total: 26,068 glyphs (229 KB binary, sorted by Unicode code point for binary search)
+ * Total: 26,212 glyphs (230 KB binary, sorted by Unicode code point for binary search)
  */
 
 const fs = require("fs");
@@ -17,7 +17,9 @@ const path = require("path");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const ASSETS_DIR = path.join(ROOT_DIR, "assets");
-const OUTPUT_BIN = path.join(ASSETS_DIR, "cjk_font.bin");
+// --out <file> writes somewhere else (e.g. to compare with the current font first)
+const outIdx = process.argv.indexOf("--out");
+const OUTPUT_BIN = outIdx > 0 ? path.resolve(process.argv[outIdx + 1]) : path.join(ASSETS_DIR, "cjk_font.bin");
 
 function bdfTo7Rows(bbx, bitmapLines) {
   const [w, h, xoff, yoff] = bbx;
@@ -104,6 +106,6 @@ for (let i = 0; i < sortedCodes.length; i++) {
   }
 }
 
-fs.mkdirSync(ASSETS_DIR, { recursive: true });
+fs.mkdirSync(path.dirname(OUTPUT_BIN), { recursive: true });
 fs.writeFileSync(OUTPUT_BIN, buf);
 console.log("Generated:", OUTPUT_BIN, "(" + (buf.length / 1024).toFixed(1) + " KB)");

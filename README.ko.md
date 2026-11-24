@@ -29,7 +29,8 @@
   - **한국어**: **Unicode 현대 한글 전 음절 11,172자 100% 지원** (U+AC00 ~ U+D7A3), 희귀 음절도 깨짐 없이 표시.
   - **일본어**: 히라가나, 가타카나, 장음 부호(`ー`), 탁음/반탁음, 촉음 및 한자.
   - **중국어**: 번체 및 간체 (CJK 통합 한자 14,719자).
-- **철저한 개인정보 보호**: Google 캘린더의 비공개 iCal 주소는 기기 로컬에만 저장되며 Worker 코드에 하드코딩되지 않아 안전합니다.
+- **반복 일정 완벽 지원**: 매일/매주/매월/매년 반복("매월 마지막 금요일" 포함), 예외 날짜, 개별 변경된 회차, 취소된 일정, 여러 날에 걸친 종일 일정, 일정별 시간대를 Worker가 정확하게 처리합니다.
+- **개인정보 보호 중심 설계**: 비공개 iCal 주소를 Worker secret(`ICAL_URL`)으로 저장하면 요청 URL이나 로그에 남지 않습니다. Worker는 액세스 키(`ACCESS_KEY`, 헤더로 전송)로 보호되며 Google 캘린더만 가져오므로 오픈 프록시로 악용되지 않습니다.
 - **2줄 동적 레이아웃**:
   - 상단: 포맷된 날짜, 시간 및 현지화된 요일 (월, 화, 수... 또는 오늘, 내일).
   - 하단: 일정 제목 (긴 제목은 매끄러운 전광판 마키 스크롤 지원).
@@ -38,9 +39,9 @@
   - 노브를 꾹 누르면 가장 가까운 첫 번째 일정으로 즉시 복귀.
   - 자동 전환 시간을 `0`초로 설정하면 자동 롤링이 꺼지고 100% 노브 수동 제어 모드로 작동.
 - **네트워크 자동 복구 및 상태 인디케이터**:
-  - 네트워크 지연이나 순단 발생 시 화면에 실시간 카운트다운 표시 (`Retry 5s` $\rightarrow$ `Loading...`).
+  - 연결 실패 시 간격을 늘려 가며 자동 재시도 (`Retry 5s` → `10s` → `20s`…, 최대 동기화 간격까지). 설정 오류는 재시도하지 않고 바로 표시합니다.
   - 기기 상단의 Select 버튼을 누르면 언제든지 즉시 새로고침.
-  - 로딩 중(`Loading...`), 재시도(`Retry`), 초기 설정 안내(`Set Worker` / `Set iCal`) 등의 상태 문구는 16px 디스플레이 중앙에 깔끔하게 정렬됩니다.
+  - 로딩 중(`Loading...`), 재시도(`Retry`), 초기 설정 안내(`Set Worker` / `Set iCal`), 키 불일치(`Bad key`), 기타 오류(`Err 4xx`) 등의 상태 문구는 16px 디스플레이 중앙에 깔끔하게 정렬됩니다.
 - **엣지 캐싱 및 초고속 응답**:
   - Worker 내부 2.5분 메모리 캐시를 통해 Google로부터 300KB iCal 파일을 불필요하게 반복 다운로드하는 것을 방지.
   - Cloudflare Edge를 통한 20~50ms 수준의 초고속 응답.
@@ -54,22 +55,22 @@
 │     Ulanzi TC002 / ESP32        │
 │  (calendar_cjk.be Berry Script) │
 └────────────────┬────────────────┘
-                 │ HTTP GET ?ical=...&tz=...&lang=...
+                 │ HTTP GET ?tz=...&lang=...  (header: X-Access-Key)
                  ▼
 ┌─────────────────────────────────┐
 │       Cloudflare Worker         │
-│    (worker/worker.js ~14KB)     │
+│    (worker/worker.js ~32KB)     │
 └────────┬──────────────────────┬─┘
          │                      │
          │ iCal 가져오기 & 캐싱    │ 폰트 엣지 캐싱
          ▼                      ▼
 ┌──────────────────┐  ┌───────────────────────────────┐
 │ Google Calendar  │  │   jsDelivr / GitHub CDN       │
-│   (개인 iCal)     │  │ (assets/cjk_font.bin ~229 KB) │
+│   (개인 iCal)     │  │ (assets/cjk_font.bin ~230 KB) │
 └──────────────────┘  └───────────────────────────────┘
 ```
 
-1. **TC002**가 언어, 시간대, iCal URL이 포함된 요청을 전송합니다.
+1. **TC002**가 언어, 시간대(선택적으로 iCal URL)가 포함된 요청을 전송하고, 액세스 키는 헤더로 전달합니다.
 2. **Cloudflare Worker**가 iCal을 파싱하고, 2.6만 자 바이너리 폰트를 참조하여 텍스트를 8px 도트 매트릭스 열 데이터로 변환합니다.
 3. **TC002**는 수신된 도트 데이터를 화면에 즉시 렌더링합니다. ESP32 내부 플래시 메모리에 대용량 폰트를 저장할 필요가 전혀 없습니다.
 
@@ -95,7 +96,7 @@
 
 두 가지 배포 옵션 중 하나를 선택할 수 있습니다:
 
-#### 옵션 A: CDN 에디션 (강력 추천, 코드 크기 약 14KB, Gzip 후 약 4KB)
+#### 옵션 A: CDN 에디션 (강력 추천, 코드 크기 약 32KB, Gzip 후 약 11KB)
 1. 본 저장소를 Fork하거나 GitHub에 푸시합니다.
 2. [Cloudflare Dashboard](https://dash.cloudflare.com/) $\rightarrow$ **Workers & Pages** $\rightarrow$ **Create Worker**로 이동합니다.
 3. Worker 이름(예: `tc002-calendar`)을 입력하고 **Deploy**를 클릭합니다.
@@ -104,6 +105,26 @@
 
 #### 옵션 B: 독립형 단일 파일 에디션 (CDN 불필요)
 외부 CDN을 거치지 않고 단일 파일로 동작시키고 싶다면, [`worker/worker.standalone.js`](worker/worker.standalone.js)의 내용을 그대로 Cloudflare Worker에 복사하여 배포하세요 (전체 폰트 데이터가 Base64로 내장되어 있습니다).
+
+---
+
+### 1.5단계: Worker 보호하기 (권장)
+
+iCal 주소를 시계가 아닌 Worker에 저장하고 액세스 키를 필수로 설정합니다:
+
+1. 임의의 키를 생성합니다 (예: `openssl rand -hex 24`).
+2. **Cloudflare Dashboard** → 해당 Worker → **Settings** → **Variables and Secrets**에서 유형이 **Secret**인 변수 두 개를 추가합니다:
+   - `ICAL_URL`: 0단계에서 복사한 비공개 iCal 주소.
+   - `ACCESS_KEY`: 생성한 임의의 키.
+
+   `worker/` 폴더에서 Wrangler를 사용할 수도 있습니다: `wrangler secret put ICAL_URL`, `wrangler secret put ACCESS_KEY`.
+3. 3단계 설정에서 같은 키를 **Access key**에 입력하고 **iCal URL**은 비워 둡니다.
+
+> [!WARNING]
+> `ACCESS_KEY` 없이 `ICAL_URL`만 설정하지 마세요. Worker 주소를 아는 사람이라면 누구나 캘린더를 읽을 수 있게 됩니다. 이 경우 Worker는 오류를 반환합니다.
+
+> [!TIP]
+> Worker는 HTTPS를 통해 `calendar.google.com`의 iCal만 가져옵니다. 다른 호스트를 허용하려면 `ALLOWED_HOSTS` 변수(쉼표로 구분)를 설정하세요. iCal 주소가 유출되었다면 Google 캘린더에서 비밀 주소를 '재설정'한 뒤 `ICAL_URL`을 갱신하세요.
 
 ---
 
@@ -127,7 +148,8 @@ AWTRIX 관리 페이지 $\rightarrow$ **Apps** $\rightarrow$ **Google Calendar C
 
 | 설정 항목 | 설명 | 기본값 |
 | :--- | :--- | :--- |
-| **iCal URL** | Google 캘린더 비밀 주소 (iCal 형식 URL) | *(필수)* |
+| **iCal URL** | Google 캘린더 비밀 주소 (iCal 형식). Worker의 `ICAL_URL` secret에 저장한 경우(권장) 비워 둡니다 | *(비움)* |
+| **Access key** | Worker의 `ACCESS_KEY` secret과 같은 값. `X-Access-Key` 헤더로 전송됩니다 | *(비움)* |
 | **Worker URL** | 배포한 Cloudflare Worker 주소 (`https://<name>.<subdomain>.workers.dev`) | *(필수)* |
 | **Language** | 요일 및 상대 날짜 언어: `ko`, `zh-TW`, `zh-CN`, `en`, `ja` | `zh-TW` *(한국어는 `ko`로 설정)* |
 | **Time zone** | 표준 IANA 시간대 (예: `Asia/Seoul`, `Asia/Tokyo`) | `Asia/Taipei` *(한국은 `Asia/Seoul`)* |
@@ -151,7 +173,7 @@ AWTRIX 관리 페이지 $\rightarrow$ **Apps** $\rightarrow$ **Google Calendar C
 
 ## 🛠️ 소스에서 폰트 바이너리 빌드하기
 
-`assets/cjk_font.bin` 파일은 TakWolf의 오픈소스 폰트(Fusion Pixel Font)에서 추출한 26,068자의 도트 매트릭스를 포함하고 있습니다:
+`assets/cjk_font.bin` 파일은 TakWolf의 오픈소스 폰트(Fusion Pixel Font)에서 추출한 26,212자의 도트 매트릭스를 포함하고 있습니다:
 
 ```bash
 node scripts/build_font.js /path/to/ja.bdf /path/to/ko.bdf
@@ -162,6 +184,23 @@ node scripts/build_font.js /path/to/ja.bdf /path/to/ko.bdf
   - `bytes 0-1`: Unicode 코드 포인트 (16-bit Big-Endian).
   - `bytes 2-8`: 7개 행의 각 8-bit 비트맵 데이터.
 - 데이터는 유니코드 코드 포인트 오름차순으로 엄격하게 정렬되어 있어, Worker에서 이진 탐색(Binary Search) 수행 시 최대 $\le 15$회의 비교(0.001ms 미만)로 즉시 문자를 찾아냅니다.
+
+---
+
+## 🧪 개발
+
+```bash
+node scripts/test_worker.mjs
+```
+
+Worker 오프라인 회귀 테스트(반복 일정, 시간대, 문장 부호, 호스트 제한, 액세스 키)를 실행합니다.
+
+```bash
+node scripts/build_standalone.js --check
+node scripts/build_standalone.js
+```
+
+`worker/worker.standalone.js`는 `worker/worker.js`와 폰트 바이너리로부터 자동 생성됩니다. `worker.js`만 수정한 뒤 다시 생성하세요.
 
 ---
 

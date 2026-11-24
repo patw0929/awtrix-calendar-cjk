@@ -128,6 +128,18 @@ if (punct) {
   check("only the emoji renders as a box", boxCount === 1, boxCount);
 }
 
+// Punctuation from the font is trimmed: no glyph should be wider than its ink + 1 gap column
+{
+  const { renderStringTo8pxCols } = await import("data:text/javascript;base64," + Buffer.from(src + "\nexport { renderStringTo8pxCols };").toString("base64"));
+  const fb = new Uint8Array(font);
+  for (const p of ["、", "。", "「", "」", "（", "）", "：", "！"]) {
+    const cols = renderStringTo8pxCols(p, fb);
+    check(`"${p}" is trimmed (${cols.length}px)`, cols.length >= 2 && cols.length <= 6 && cols[0] !== 0 && cols.at(-1) === 0, cols);
+  }
+  check("ideographic space keeps a gap", renderStringTo8pxCols("\u3000", fb).length === 4);
+  check("CJK ideographs stay 8px", renderStringTo8pxCols("會", fb).length === 8);
+}
+
 // Error handling
 const badTz = await call({ tz: "Mars/Olympus" });
 check("invalid tz → 400", badTz.status === 400, badTz);

@@ -4,7 +4,7 @@
  * agenda, and rasterizes CJK, Japanese (Kana/Kanji), and Korean (Hangul) text into
  * 8px dot-matrix columns.
  *
- * Font binary (26,068 glyphs) is loaded from CDN and cached at Cloudflare edge.
+ * Font binary (26,212 glyphs) is loaded from CDN and cached at Cloudflare edge.
  *
  * @author patw (based on Mvrcl1005)
  * @license MIT
@@ -826,7 +826,7 @@ const ASCII_5x7 = {
   "9": [0x06, 0x49, 0x49, 0x29, 0x1E]
 };
 
-// CJK / typographic punctuation not covered by the font binary
+// Fallback glyphs for punctuation (used when the font binary lacks them)
 const PUNCT_5x7 = {
   0x3000: [0, 0, 0, 0, 0],          // ideographic space
   0x3001: [0x10, 0x20, 0x40],       // 、
@@ -872,11 +872,29 @@ function rowsToCols(rows) {
   return cols;
 }
 
+// Full-width punctuation glyphs are 8 px wide with mostly empty columns; on a 35 px
+// viewport that wastes space, so their empty side columns are trimmed.
+function isTrimmedPunct(cp) {
+  return (cp >= 0x3000 && cp <= 0x303F) || (cp >= 0xFF01 && cp <= 0xFF5E);
+}
+
+function trimCols(cp, cols) {
+  let a = 0;
+  let b = cols.length - 1;
+  while (a <= b && cols[a] === 0) a++;
+  while (b >= a && cols[b] === 0) b--;
+  if (a > b) return [0, 0, 0, 0]; // blank glyph such as the ideographic space
+  return cols.slice(a, b + 1).concat(0);
+}
+
 function glyphCols(ch, cp, fontBuf) {
   if (Object.prototype.hasOwnProperty.call(ASCII_5x7, ch)) return ASCII_5x7[ch].concat(0);
   if (cp >= 0x20 && cp <= 0x7E) return renderAsciiChar(ch).concat(0);
   const cjkRows = lookupCJK(cp, fontBuf);
-  if (cjkRows) return rowsToCols(cjkRows);
+  if (cjkRows) {
+    const cols = rowsToCols(cjkRows);
+    return isTrimmedPunct(cp) ? trimCols(cp, cols) : cols;
+  }
   if (cp >= 0xFF01 && cp <= 0xFF5E) {
     // Full-width ASCII forms （ ） ： ！ ？ ， ... -> half-width glyph
     const half = String.fromCharCode(cp - 0xFEE0);

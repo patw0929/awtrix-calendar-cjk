@@ -29,7 +29,8 @@ It solves the classic missing-glyph issue (`???` or blank rectangles) on memory-
   - **Chinese**: Traditional & Simplified (14,719 CJK ideographs).
   - **Japanese**: Full Hiragana, Katakana, Chouonpu (`ー`), and Kanji.
   - **Korean**: **100% of all modern Hangul syllables** (11,172 characters from U+AC00 to U+D7A3).
-- **Zero Privacy Leakage**: Your secret Google Calendar iCal URL is stored locally on your device and transmitted as a query parameter—never hardcoded into the Worker.
+- **Recurring Events Done Right**: Daily / weekly / monthly / yearly repeats (including "last Friday of the month"), exceptions, moved occurrences, cancelled events, multi-day all-day events and per-event time zones are all handled by the Worker.
+- **Privacy-Minded**: Store the secret iCal URL as a Worker secret (`ICAL_URL`) so it never travels in request URLs or logs, protect the Worker with an access key (`ACCESS_KEY`, sent as a header), and only Google Calendar is fetched, so the Worker cannot be abused as an open proxy.
 - **Two-Line Dynamic Layout**:
   - Top row: Formatted date, time, and localized weekday.
   - Bottom row: Event title with smooth marquee scrolling for long titles.
@@ -38,9 +39,9 @@ It solves the classic missing-glyph issue (`???` or blank rectangles) on memory-
   - Press knob to return to the earliest event.
   - Configurable auto-cycle interval (set to `0` to disable auto-cycle for 100% manual knob operation).
 - **Auto-Recovery & Connection Resilience**:
-  - Visual retry countdown (`Retry 5s` → `Loading...`) on network hiccups.
+  - Automatic retry with exponential backoff (`Retry 5s` → `10s` → `20s` …, capped at the refresh interval); configuration errors are shown instead of retried.
   - Press top button at any time to force an immediate refresh.
-  - Status indicators (`Loading...`, `Retry`, `Set Worker`, `Set iCal`) are vertically centered on the 16px screen.
+  - Status indicators (`Loading...`, `Retry`, `Set Worker`, `Set iCal`, `Bad key`, `Err 4xx`) are vertically centered on the 16px screen.
 - **Ultra-Fast & Edge Cached**:
   - In-memory 2.5-minute cache prevents redundant 300KB iCal downloads from Google.
   - Sub-50ms response times at Cloudflare edge.
@@ -54,18 +55,18 @@ It solves the classic missing-glyph issue (`???` or blank rectangles) on memory-
 │     Ulanzi TC002 / ESP32        │
 │  (calendar_cjk.be Berry Script) │
 └────────────────┬────────────────┘
-                 │ HTTP GET ?ical=...&tz=...&lang=...
+                 │ HTTP GET ?tz=...&lang=...  (header: X-Access-Key)
                  ▼
 ┌─────────────────────────────────┐
 │       Cloudflare Worker         │
-│     (worker/worker.js ~14KB)    │
+│     (worker/worker.js ~32KB)    │
 └────────┬──────────────────────┬─┘
          │                      │
          │ Fetches & Caches     │ Fetches & Caches
          ▼                      ▼
 ┌──────────────────┐  ┌───────────────────────────────┐
 │ Google Calendar  │  │   jsDelivr / GitHub CDN       │
-│  (Private iCal)  │  │ (assets/cjk_font.bin ~229 KB) │
+│  (Private iCal)  │  │ (assets/cjk_font.bin ~230 KB) │
 └──────────────────┘  └───────────────────────────────┘
 ```
 
@@ -95,7 +96,7 @@ Your AWTRIX clock requires your calendar's private iCal link to securely fetch u
 
 Choose one of two deployment options:
 
-#### Option A: CDN Edition (Recommended, ~14KB, ~4KB gzipped)
+#### Option A: CDN Edition (Recommended, ~32KB, ~11KB gzipped)
 1. Fork or push this repository to your GitHub.
 2. Open [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create application** → **Create Worker**.
 3. Name your worker (e.g., `tc002-calendar`) and click **Deploy**.
@@ -104,6 +105,26 @@ Choose one of two deployment options:
 
 #### Option B: Standalone Edition (Single file, no CDN needed)
 If you don't want to use a CDN, copy [`worker/worker.standalone.js`](worker/worker.standalone.js) (which embeds the entire font database) and paste it into Cloudflare Worker.
+
+---
+
+### Step 1.5: Protect the Worker (Recommended)
+
+Store the iCal URL in the Worker instead of on the clock, and require an access key:
+
+1. Generate a random key, e.g. `openssl rand -hex 24`.
+2. In **Cloudflare Dashboard** → your Worker → **Settings** → **Variables and Secrets**, add two variables of type **Secret**:
+   - `ICAL_URL`: your secret iCal address from Step 0.
+   - `ACCESS_KEY`: the random key.
+
+   Or with Wrangler from the `worker/` folder: `wrangler secret put ICAL_URL` and `wrangler secret put ACCESS_KEY`.
+3. In Step 3, enter the same key in **Access key** and leave **iCal URL** empty.
+
+> [!WARNING]
+> Never set `ICAL_URL` without `ACCESS_KEY`: anyone who knows your Worker URL could read your calendar. The Worker refuses that combination with an error.
+
+> [!TIP]
+> The Worker only fetches iCal feeds from `calendar.google.com` over HTTPS. To allow other hosts, set the `ALLOWED_HOSTS` variable (comma-separated). If your iCal address ever leaks, reset it in Google Calendar (**Reset** next to the secret address) and update `ICAL_URL`.
 
 ---
 
@@ -126,7 +147,8 @@ In the AWTRIX web UI, go to **Apps** → **Google Calendar CJK**:
 
 | Setting | Description | Default |
 | :--- | :--- | :--- |
-| **iCal URL** | Your secret Google Calendar iCal address (*Private address in iCal format*) | *(Required)* |
+| **iCal URL** | Your secret Google Calendar iCal address. Leave empty when it is stored as the Worker's `ICAL_URL` secret (recommended) | *(Empty)* |
+| **Access key** | Must match the Worker's `ACCESS_KEY` secret; sent as the `X-Access-Key` header | *(Empty)* |
 | **Worker URL** | Your deployed Cloudflare Worker URL (`https://<name>.<subdomain>.workers.dev`) | *(Required)* |
 | **Language** | Weekday and relative date language: `zh-TW`, `zh-CN`, `en`, `ja`, `ko` | `zh-TW` |
 | **Time zone** | Standard IANA time zone (e.g. `Asia/Taipei`, `Asia/Tokyo`, `America/New_York`) | `Asia/Taipei` |
@@ -150,7 +172,7 @@ In the AWTRIX web UI, go to **Apps** → **Google Calendar CJK**:
 
 ## 🛠️ Building Font Binary from Source
 
-The font binary `assets/cjk_font.bin` contains 26,068 pre-rendered glyphs extracted from TakWolf's open-source 8px BDF fonts:
+The font binary `assets/cjk_font.bin` contains 26,212 pre-rendered glyphs extracted from TakWolf's open-source 8px BDF fonts:
 
 ```bash
 node scripts/build_font.js /path/to/ja.bdf /path/to/ko.bdf
@@ -161,6 +183,23 @@ Format specification:
   - `bytes 0-1`: Unicode code point (16-bit Big-Endian).
   - `bytes 2-8`: 7 rows of 8-bit bitmap data.
 - Entries are sorted by code point in ascending order, enabling $O(\log N)$ binary search in under 15 comparisons.
+
+---
+
+## 🧪 Development
+
+```bash
+node scripts/test_worker.mjs
+```
+
+Runs the Worker's offline regression tests (recurring events, time zones, punctuation, host allowlist, access key).
+
+```bash
+node scripts/build_standalone.js --check
+node scripts/build_standalone.js
+```
+
+`worker/worker.standalone.js` is generated from `worker/worker.js` plus the font binary. Edit `worker.js` only, then regenerate.
 
 ---
 
