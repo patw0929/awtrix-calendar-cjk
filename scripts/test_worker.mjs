@@ -74,11 +74,19 @@ const ics = [
   "END:VCALENDAR"
 ].join("\r\n");
 
-globalThis.fetch = async u => String(u).includes("font") ? new Response(font) : new Response(ics);
+const fetched = [];
+globalThis.fetch = async u => {
+  if (String(u).includes("font")) return new Response(font);
+  fetched.push(String(u));
+  return new Response(ics);
+};
 
-async function call(params) {
-  const q = new URLSearchParams(Object.assign({ ical: "https://cal.example/a.ics", lang: "en", tz: TZ, days: "14", max: "50" }, params));
-  const res = await worker.fetch(new Request("https://w.example/?" + q), { FONT_URL: "https://font.example" });
+const ICAL = "https://calendar.google.com/calendar/ical/test/private-x/basic.ics";
+
+async function call(params, env, headers) {
+  const q = new URLSearchParams(Object.assign({ ical: ICAL, lang: "en", tz: TZ, days: "14", max: "50" }, params));
+  for (const [k, v] of [...q]) if (v === "") q.delete(k);
+  const res = await worker.fetch(new Request("https://w.example/?" + q, { headers: headers || {} }), Object.assign({ FONT_URL: "https://font.example" }, env || {}));
   return { status: res.status, body: await res.json(), headers: res.headers };
 }
 
@@ -125,6 +133,36 @@ const badTz = await call({ tz: "Mars/Olympus" });
 check("invalid tz → 400", badTz.status === 400, badTz);
 const plusTz = await call({ tz: "Etc/GMT+8" });
 check("Etc/GMT+8 works when URL-encoded", plusTz.status === 200, plusTz.body);
+
+// Host allowlist / secret
+const n0 = fetched.length;
+const otherHost = await call({ ical: "https://evil.example/a.ics" });
+check("non-allowed host → 403", otherHost.status === 403, otherHost.body);
+const plainHttp = await call({ ical: "http://calendar.google.com/a.ics" });
+check("http (not https) → 403", plainHttp.status === 403, plainHttp.body);
+const lookalike = await call({ ical: "https://calendar.google.com.evil.example/a.ics" });
+check("look-alike host → 403", lookalike.status === 403, lookalike.body);
+check("rejected URLs were never fetched", fetched.length === n0, fetched.slice(n0));
+const custom = await call({ ical: "https://cal.example/a.ics" }, { ALLOWED_HOSTS: "cal.example, calendar.google.com" });
+check("ALLOWED_HOSTS override", custom.status === 200, custom.body);
+const KEY = { "X-Access-Key": "k3y" };
+const secretEnv = s => ({ ICAL_URL: ICAL + s, ACCESS_KEY: "k3y" });
+const secretOnly = await call({ ical: "" }, secretEnv("?secret"), KEY);
+check("empty ical param uses ICAL_URL secret", secretOnly.status === 200 && fetched.at(-1) === ICAL + "?secret", fetched.at(-1));
+await call({ ical: "https://calendar.google.com/someone-else.ics" }, secretEnv("?secret2"), KEY);
+check("ICAL_URL secret wins over query param", fetched.at(-1) === ICAL + "?secret2", fetched.at(-1));
+const n1 = fetched.length;
+const noKey = await call({ ical: "" }, secretEnv("?s3"));
+check("missing access key → 401", noKey.status === 401, noKey.body);
+const badKey = await call({ ical: "" }, secretEnv("?s3"), { "X-Access-Key": "wrong" });
+check("wrong access key → 401", badKey.status === 401, badKey.body);
+const secretNoKey = await call({ ical: "" }, { ICAL_URL: ICAL + "?s4" });
+check("ICAL_URL without ACCESS_KEY is refused (503)", secretNoKey.status === 503, secretNoKey.body);
+check("refused requests never fetched the calendar", fetched.length === n1, fetched.slice(n1));
+const keyOnly = await call({}, { ACCESS_KEY: "k3y" }, KEY);
+check("ACCESS_KEY alone + ical param works", keyOnly.status === 200, keyOnly.body);
+const none = await call({ ical: "" });
+check("no iCal at all → 400", none.status === 400, none.body);
 
 console.log(failed ? `\n${failed} check(s) failed` : "\nall checks passed");
 process.exit(failed ? 1 : 0);

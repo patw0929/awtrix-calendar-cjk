@@ -3,7 +3,8 @@
 # @author  patw (based on Mvrcl1005)
 # @version 2.0
 # @display 52x16
-# @config  ical  text   "iCal URL"          help="Google Calendar Secret iCal URL (Private address in iCal format)"
+# @config  ical  text   "iCal URL"          help="Google Calendar Secret iCal URL. Leave empty if it is stored as the ICAL_URL secret of your Worker (recommended)"
+# @config  key   text   "Access key"        help="Must match the ACCESS_KEY secret of your Worker (sent as a header, required when the iCal URL is stored in the Worker)"
 # @config  proxy text   "Worker URL"        default="https://your-worker-name.your-subdomain.workers.dev" help="Cloudflare Worker CJK Proxy URL"
 # @config  lang  select "Language"          default="zh-TW" options="en,zh-TW,zh-CN,ja,ko" help="Language for weekdays and relative dates"
 # @config  tz    text   "Time zone"         default="Asia/Taipei" help="IANA time zone, e.g. Asia/Taipei, Europe/London"
@@ -18,7 +19,7 @@ import json
 import string
 
 class GoogleCalendarCJK
-  var worker_url, ical_url, lang, tz, days, period, ticks, busy, busy_sec, retry_sec, fail_count
+  var worker_url, ical_url, access_key, lang, tz, days, period, ticks, busy, busy_sec, retry_sec, fail_count
   var cycle_sec, cycle_timer, cur_idx, rows, status_msg
   var tcol, tc, speed, hide
   var title_scroll_x, title_scroll_delay
@@ -38,6 +39,9 @@ class GoogleCalendarCJK
     if self.ical_url == nil
       self.ical_url = ""
     end
+
+    self.access_key = store.get("key")
+    if self.access_key == nil self.access_key = "" end
 
     self.lang = store.get("lang")
     if self.lang == nil self.lang = "zh-TW" end
@@ -139,7 +143,14 @@ class GoogleCalendarCJK
       self.fail_count = 0
       self.retry_sec = nil
       self.ticks = self.period
-      self.status_msg = "Err " + str(status)
+      # 400 with no iCal URL here = the Worker has no ICAL_URL secret either
+      if status == 401
+        self.status_msg = "Bad key"
+      elif status == 400 && size(self.ical_url) == 0
+        self.status_msg = "Set iCal"
+      else
+        self.status_msg = "Err " + str(status)
+      end
       return
     end
     self.fail_count = 0
@@ -214,18 +225,24 @@ class GoogleCalendarCJK
     self.ticks = self.period
 
     var has_worker = size(self.worker_url) > 0 && string.find(self.worker_url, "your-worker") < 0
-    if has_worker && size(self.ical_url) > 0
+    if has_worker
       self.busy = true
       self.busy_sec = 0
       if self.rows == nil || size(self.rows) == 0
         self.status_msg = "Loading..."
       end
-      var full_url = self.worker_url + "?days=" + str(self.days) + "&tz=" + self.urlencode(str(self.tz)) + "&lang=" + self.urlencode(str(self.lang)) + "&ical=" + self.urlencode(self.ical_url)
-      http.get(full_url, /body, status -> self.on_body(body, status))
-    elif !has_worker
-      self.status_msg = "Set Worker"
+      var full_url = self.worker_url + "?days=" + str(self.days) + "&tz=" + self.urlencode(str(self.tz)) + "&lang=" + self.urlencode(str(self.lang))
+      # Empty = the Worker uses its ICAL_URL secret, so the secret URL never leaves the Worker
+      if size(self.ical_url) > 0
+        full_url += "&ical=" + self.urlencode(self.ical_url)
+      end
+      if size(self.access_key) > 0
+        http.get(full_url, /body, status -> self.on_body(body, status), {'headers': {'X-Access-Key': self.access_key}})
+      else
+        http.get(full_url, /body, status -> self.on_body(body, status))
+      end
     else
-      self.status_msg = "Set iCal"
+      self.status_msg = "Set Worker"
     end
   end
 

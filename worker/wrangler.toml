@@ -5,3 +5,10 @@ compatibility_date = "2024-01-01"
 [vars]
 # Optional custom CDN font URL if not using default jsDelivr
 # FONT_URL = "https://cdn.jsdelivr.net/gh/patw0929/awtrix-calendar-cjk@master/assets/cjk_font.bin"
+
+# Optional: hosts the worker may fetch iCal feeds from (default: calendar.google.com)
+# ALLOWED_HOSTS = "calendar.google.com"
+
+# Recommended: keep the secret iCal URL out of request URLs and logs
+#   wrangler secret put ICAL_URL
+# then leave the "iCal URL" field empty in the AWTRIX app.

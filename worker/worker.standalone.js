@@ -57,7 +57,7 @@ function lookupCJK(code, buf) {
 // In-memory cache: 2.5 minutes (150,000ms) to prevent repeated fetches from Google that could cause timeouts
 let _icsCache = { text: null, url: null, timestamp: 0 };
 
-async function fetchIcsText(url) {
+async function fetchIcsText(url, env) {
   const now = Date.now();
   if (_icsCache.text && _icsCache.url === url && (now - _icsCache.timestamp < 150000)) {
     return _icsCache.text;
@@ -69,6 +69,9 @@ async function fetchIcsText(url) {
     });
   } catch (err) {
     throw new HttpError(503, "iCal fetch failed: " + err.message);
+  }
+  if (resp.url && !isAllowedIcalUrl(resp.url, env)) {
+    throw new HttpError(403, "iCal URL redirected to a host that is not allowed");
   }
   if (!resp.ok) {
     // 4xx = wrong / revoked URL (permanent), 5xx = Google hiccup (retry later)
@@ -152,14 +155,60 @@ function jsonResponse(obj, status, extraHeaders) {
   });
 }
 
+// Hosts the worker may fetch iCal feeds from (override with the ALLOWED_HOSTS var,
+// comma separated). Keeps the worker from being used as an open proxy.
+const DEFAULT_ALLOWED_HOSTS = ["calendar.google.com"];
+
+function allowedHosts(env) {
+  const v = env?.ALLOWED_HOSTS;
+  if (!v) return DEFAULT_ALLOWED_HOSTS;
+  return String(v).split(",").map(h => h.trim().toLowerCase()).filter(Boolean);
+}
+
+function isAllowedIcalUrl(raw, env) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch (e) {
+    return false;
+  }
+  return u.protocol === "https:" && allowedHosts(env).includes(u.hostname.toLowerCase());
+}
+
+// Constant-time string comparison
+function safeEqual(a, b) {
+  a = String(a || "");
+  b = String(b || "");
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+  return diff === 0;
+}
+
 export default {
   async fetch(request, env) {
     const t0 = Date.now();
     const url = new URL(request.url);
-    const icalUrl = url.searchParams.get("ical") || env?.ICAL_URL;
+
+    // With ACCESS_KEY set, every request needs the X-Access-Key header (kept out of URLs/logs)
+    if (env?.ACCESS_KEY && !safeEqual(request.headers.get("X-Access-Key"), env.ACCESS_KEY)) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+    // A worker secret ICAL_URL wins over the query string: the secret URL then never
+    // travels in request URLs (or logs), and others can't use the worker for their feeds.
+    // It must be paired with ACCESS_KEY, otherwise anyone who knows the worker URL could
+    // read the calendar.
+    if (env?.ICAL_URL && !env?.ACCESS_KEY) {
+      return jsonResponse({ error: "ICAL_URL is set but ACCESS_KEY is not. Set the ACCESS_KEY worker secret." }, 503);
+    }
+    const icalUrl = env?.ICAL_URL || url.searchParams.get("ical");
 
     if (!icalUrl) {
-      return jsonResponse({ error: "Missing required 'ical' parameter. Please provide your Google Calendar secret iCal URL." }, 400);
+      return jsonResponse({ error: "Missing iCal URL. Set the ICAL_URL worker secret or pass the 'ical' parameter." }, 400);
+    }
+    if (!isAllowedIcalUrl(icalUrl, env)) {
+      return jsonResponse({ error: "iCal host not allowed. Allowed: " + allowedHosts(env).join(", ") }, 403);
     }
 
     const tz = (url.searchParams.get("tz") || "Asia/Taipei").trim();
@@ -177,7 +226,7 @@ export default {
     try {
       const tFetch0 = Date.now();
       const [icsText, fontBuf] = await Promise.all([
-        fetchIcsText(icalUrl),
+        fetchIcsText(icalUrl, env),
         getFontBuf(env)
       ]);
       const tFetch1 = Date.now();
