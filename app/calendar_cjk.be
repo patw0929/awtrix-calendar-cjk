@@ -18,7 +18,7 @@ import json
 import string
 
 class GoogleCalendarCJK
-  var worker_url, ical_url, lang, tz, days, period, ticks, busy, retry_sec
+  var worker_url, ical_url, lang, tz, days, period, ticks, busy, busy_sec, retry_sec, fail_count
   var cycle_sec, cycle_timer, cur_idx, rows, status_msg
   var tcol, tc, speed, hide
   var title_scroll_x, title_scroll_delay
@@ -57,6 +57,7 @@ class GoogleCalendarCJK
 
     var sp = store.get("speed")
     self.speed = sp != nil ? int(sp) : 100
+    if self.speed < 1 self.speed = 100 end
 
     self.tcol = store.get("tcol")
     if self.tcol == nil self.tcol = 0x8AB4F8 end
@@ -69,15 +70,14 @@ class GoogleCalendarCJK
 
     self.ticks = 0
     self.busy = false
+    self.busy_sec = 0
+    self.fail_count = 0
     self.rows = nil
     self.cur_idx = 0
     self.status_msg = "Loading..."
     self.retry_sec = nil
 
-    self.title_scroll_x = 0
-    self.title_scroll_delay = 30
-    self.time_scroll_x = 0
-    self.time_scroll_delay = 30
+    self.reset_scroll()
 
     # 3x5 digits (0-9) for calendar icon date
     self.font = [0x7B6F, 0x2C97, 0x73E7, 0x72CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF]
@@ -86,14 +86,63 @@ class GoogleCalendarCJK
     self.day2 = -1
   end
 
+  # Reset both scroll positions (used when the shown event changes)
+  def reset_scroll()
+    self.title_scroll_x = 0
+    self.title_scroll_delay = 30
+    self.time_scroll_x = 0
+    self.time_scroll_delay = 30
+  end
+
+  # Percent-encode a query parameter value (UTF-8 safe: works byte by byte)
+  def urlencode(s)
+    var hex = "0123456789ABCDEF"
+    var out = ""
+    var i = 0
+    while i < size(s)
+      var ch = s[i]
+      var c = string.byte(ch)
+      if (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c == 0x2D || c == 0x2E || c == 0x5F || c == 0x7E || c == 0x2F || c == 0x3A
+        out += ch
+      else
+        out += "%" + hex[c >> 4] + hex[c & 0x0F]
+      end
+      i += 1
+    end
+    return out
+  end
+
+  # Temporary failure: retry after 5, 10, 20, 40 ... seconds (capped at the refresh interval)
+  def schedule_retry()
+    self.fail_count += 1
+    var wait = 5
+    var k = 1
+    while k < self.fail_count && wait < self.period
+      wait *= 2
+      k += 1
+    end
+    if wait > self.period wait = self.period end
+    self.retry_sec = wait
+    self.ticks = wait
+    self.status_msg = "Retry " + str(wait) + "s"
+  end
+
   def on_body(body, status)
     self.busy = false
-    if body == nil || status != 200
-      self.retry_sec = 5
-      self.ticks = 5          # Auto-retry in 5 seconds on connection hiccup
-      self.status_msg = "Retry 5s"
+    self.busy_sec = 0
+    if body == nil || status == nil || status >= 500 || (status != 200 && status < 400)
+      self.schedule_retry()
       return
     end
+    if status != 200
+      # 4xx = wrong iCal URL / time zone: don't hammer, wait for the normal refresh
+      self.fail_count = 0
+      self.retry_sec = nil
+      self.ticks = self.period
+      self.status_msg = "Err " + str(status)
+      return
+    end
+    self.fail_count = 0
     self.retry_sec = nil
 
     var d = json.load(body)
@@ -134,10 +183,7 @@ class GoogleCalendarCJK
       if self.cycle_timer <= 0
         self.cycle_timer = self.cycle_sec
         self.cur_idx = (self.cur_idx + 1) % n
-        self.title_scroll_x = 0
-        self.title_scroll_delay = 30
-        self.time_scroll_x = 0
-        self.time_scroll_delay = 30
+        self.reset_scroll()
       end
     end
 
@@ -152,17 +198,29 @@ class GoogleCalendarCJK
       end
     end
 
+    # Request in flight: give up after 30 s in case the callback never fires
+    if self.busy
+      self.busy_sec += 1
+      if self.busy_sec >= 30
+        self.busy = false
+        self.busy_sec = 0
+        self.schedule_retry()
+      end
+      return
+    end
+
     self.ticks -= 1
-    if self.ticks > 0 || self.busy return end
+    if self.ticks > 0 return end
     self.ticks = self.period
 
     var has_worker = size(self.worker_url) > 0 && string.find(self.worker_url, "your-worker") < 0
     if has_worker && size(self.ical_url) > 0
       self.busy = true
+      self.busy_sec = 0
       if self.rows == nil || size(self.rows) == 0
         self.status_msg = "Loading..."
       end
-      var full_url = self.worker_url + "?days=" + str(self.days) + "&tz=" + str(self.tz) + "&lang=" + str(self.lang) + "&ical=" + self.ical_url
+      var full_url = self.worker_url + "?days=" + str(self.days) + "&tz=" + self.urlencode(str(self.tz)) + "&lang=" + self.urlencode(str(self.lang)) + "&ical=" + self.urlencode(self.ical_url)
       http.get(full_url, /body, status -> self.on_body(body, status))
     elif !has_worker
       self.status_msg = "Set Worker"
@@ -181,34 +239,22 @@ class GoogleCalendarCJK
     if n <= 1 return false end
     if ev == "right"
       self.cur_idx = (self.cur_idx + 1) % n
-      self.title_scroll_x = 0
-      self.title_scroll_delay = 30
-      self.time_scroll_x = 0
-      self.time_scroll_delay = 30
-      self.cycle_timer = self.cycle_sec
-      return true
     elif ev == "left"
       self.cur_idx = (self.cur_idx - 1 + n) % n
-      self.title_scroll_x = 0
-      self.title_scroll_delay = 30
-      self.time_scroll_x = 0
-      self.time_scroll_delay = 30
-      self.cycle_timer = self.cycle_sec
-      return true
     elif ev == "press"
       self.cur_idx = 0
-      self.title_scroll_x = 0
-      self.title_scroll_delay = 30
-      self.time_scroll_x = 0
-      self.time_scroll_delay = 30
-      self.cycle_timer = self.cycle_sec
-      return true
+    else
+      return false
     end
+    self.reset_scroll()
+    self.cycle_timer = self.cycle_sec
+    return true
   end
 
   def on_button(btn)
     if btn == "select"
       self.retry_sec = nil
+      self.fail_count = 0
       self.ticks = 0          # Force immediate refresh
       return true
     end
@@ -266,9 +312,9 @@ class GoogleCalendarCJK
       if self.time_scroll_delay > 0
         self.time_scroll_delay -= 1
       else
-        time_offset = self.time_scroll_x / 4
-        self.time_scroll_x += 1
-        if self.time_scroll_x > (total_time_w - max_w + 10) * 4
+        time_offset = self.time_scroll_x / 400
+        self.time_scroll_x += self.speed
+        if self.time_scroll_x > (total_time_w - max_w + 10) * 400
           self.time_scroll_x = 0
           self.time_scroll_delay = 40
         end
@@ -296,9 +342,9 @@ class GoogleCalendarCJK
       if self.title_scroll_delay > 0
         self.title_scroll_delay -= 1
       else
-        title_offset = self.title_scroll_x / 4
-        self.title_scroll_x += 1
-        if self.title_scroll_x > (total_title_w - max_w + 10) * 4
+        title_offset = self.title_scroll_x / 400
+        self.title_scroll_x += self.speed
+        if self.title_scroll_x > (total_title_w - max_w + 10) * 400
           self.title_scroll_x = 0
           self.title_scroll_delay = 40
         end
@@ -320,7 +366,8 @@ class GoogleCalendarCJK
     # 4. Right scroll bar indicating current event position
     if n > 1
       rect_fill(51, 0, 1, 16, 0x202020)
-      var h = max(2, 16 / n)
+      var h = 16 / n
+      if h < 2 h = 2 end
       var y_pos = self.cur_idx * (16 - h) / (n - 1)
       rect_fill(51, y_pos, 1, h, self.tcol)
     end

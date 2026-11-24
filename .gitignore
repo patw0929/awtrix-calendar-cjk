@@ -3,3 +3,6 @@ node_modules/
 .wrangler/
 dist/
 *.log
+*.bak_*
+優化計畫/
+CLAUDE.md

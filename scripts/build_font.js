@@ -7,6 +7,7 @@
  * Merges:
  * - 14,719 CJK Unified Ideographs (Traditional & Simplified Chinese, Kanji)
  * - 177 Japanese Kana (Hiragana, Katakana, Chouonpu, Sokwon)
+ * - CJK punctuation (U+3000..303F) and full-width forms (U+FF01..FF5E)
  * - 11,172 Korean Hangul syllables (U+AC00 ~ U+D7A3, 100% of modern Hangul)
  * Total: 26,068 glyphs (229 KB binary, sorted by Unicode code point for binary search)
  */
@@ -79,8 +80,12 @@ function parseBdf(filePath, condition) {
 const jaBdf = process.argv[2] || "/tmp/fusion-pixel-8px-monospaced-ja.bdf";
 const koBdf = process.argv[3] || "/tmp/fusion-pixel-8px-monospaced-ko.bdf";
 
-// 1. Japanese Kana and CJK
-parseBdf(jaBdf, code => (code >= 0x3040 && code <= 0x30FF) || (code >= 0x4E00 && code <= 0x9FFF));
+// CJK punctuation (、。「」【】〜 ...) and full-width forms (，：！？（） ...)
+// so Chinese / Japanese titles don't fall back to the box glyph.
+const isPunct = code => (code >= 0x3000 && code <= 0x303F) || (code >= 0xFF01 && code <= 0xFF5E);
+
+// 1. Japanese Kana, CJK and punctuation
+parseBdf(jaBdf, code => (code >= 0x3040 && code <= 0x30FF) || (code >= 0x4E00 && code <= 0x9FFF) || isPunct(code));
 
 // 2. Korean Hangul and CJK
 parseBdf(koBdf, code => (code >= 0xAC00 && code <= 0xD7AF) || (code >= 0x4E00 && code <= 0x9FFF));
