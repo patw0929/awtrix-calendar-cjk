@@ -1,7 +1,7 @@
 # @name    Google Calendar CJK
 # @desc    Upcoming Google Calendar events with CJK dynamic bitmap & multi-language agenda
 # @author  patw (based on Mvrcl1005)
-# @version 2.0
+# @version 2.1
 # @display 52x16
 # @config  ical  text   "iCal URL"          help="Google Calendar Secret iCal URL. Leave empty if it is stored as the ICAL_URL secret of your Worker (recommended)"
 # @config  key   text   "Access key"        help="Must match the ACCESS_KEY secret of your Worker (sent as a header, required when the iCal URL is stored in the Worker)"
